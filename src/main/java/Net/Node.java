@@ -22,7 +22,6 @@ public class Node {
     private final int socketByteBufferSize = 512;
 
     public void start() throws IOException {
-
         TerminalThread thread = new TerminalThread();
         thread.start();
 
@@ -106,7 +105,7 @@ public class Node {
         Attributes attributes = (Attributes) key.attachment();
         attributes.socketAddress = curChannel.receive(attributes.rcvBuffer);
         String string = new String(attributes.rcvBuffer.array());
-        System.out.println("From " + attributes.socketAddress + ", message: " + string);
+        System.out.println("From " + attributes.socketAddress + ", message: " + string.trim());
         attributes.sendBuffer = StandardCharsets.UTF_8.encode(string);
 
         neighboursInfoUpdate(curChannel, (InetSocketAddress) attributes.socketAddress);

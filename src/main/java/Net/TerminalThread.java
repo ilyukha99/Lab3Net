@@ -6,6 +6,7 @@ import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
+import java.util.Arrays;
 
 public class TerminalThread extends Thread {
     private final int terminalByteBufferSize = 512;
@@ -24,6 +25,7 @@ public class TerminalThread extends Thread {
                         continue;
                     }
                     broadcast(inputTerminalBuffer);
+                    Arrays.fill(inputTerminalBuffer, (byte)0);
                 }
             }
         } catch (IOException exc) {

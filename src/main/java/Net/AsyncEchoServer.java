@@ -102,9 +102,8 @@ public class AsyncEchoServer {
     }
 
     void write(SelectionKey key) throws IOException {
-        DatagramChannel channel = (DatagramChannel) key.channel();
         Attributes attributes = (Attributes) key.attachment();
-        channel.send(attributes.sendBuffer, attributes.socketAddress);
+        serverChannel.send(attributes.sendBuffer, attributes.socketAddress);
         attributes.sendBuffer.rewind();
     }
 

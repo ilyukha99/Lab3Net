@@ -3,35 +3,30 @@ package Net;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
-import java.nio.charset.StandardCharsets;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 
 public class Node {
-    //map contains neighbour's channel, ip, port and time of last ACK from neighbour
-    static final LinkedHashMap<Pair<InetSocketAddress, DatagramChannel>, Long>
-            neighbours = new LinkedHashMap<>();
+    //list contains neighbour's ip, port
+    static final LinkedList<InetSocketAddress> neighbours = new LinkedList<>();
+    //map contains message and list of nodes, that didn't send ACK
+    static final LinkedHashMap<ByteBuffer, LinkedList<InetSocketAddress>>
+            controlMap = new LinkedHashMap<>();
     private Selector selector;
-    private DatagramChannel inetChannel;
-    private final int socketByteBufferSize = 512;
+    static DatagramChannel inetChannel;
+    private final int mtuSaveSize = 1400;
+
 
     public void start() throws IOException {
-        TerminalThread thread = new TerminalThread();
-        thread.start();
 
         DatagramChannel neighboursChannel = DatagramChannel.open();
         if (Parser.neighbourIP != null) {
             InetSocketAddress address = new InetSocketAddress(Parser.neighbourIP, Parser.neighbourPort);
             neighboursChannel.connect(address);
-            synchronized (neighbours) {
-                neighbours.put(new Pair<>(address, neighboursChannel), 0L);
-            }
+            neighbours.add(address);
         }
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -62,6 +57,9 @@ public class Node {
             SelectionKey key = inetChannel.register(selector, SelectionKey.OP_READ);
             key.attach(new Attributes());
 
+            TerminalThread thread = new TerminalThread();
+            thread.start();
+
             while (true) {
                 selector.select();
                 Iterator<SelectionKey> keyIterator = selector.selectedKeys().iterator();
@@ -71,7 +69,8 @@ public class Node {
                     if (curKey.isValid() && curKey.isReadable()) {
                         if ((int) (Math.random() * 100) >= Parser.lossPercent) {
                             read(curKey);
-                            distribute(curKey);
+                            processMessage(curKey);
+                            clearRcvBuffer(curKey);
                         }
                     }
                 }
@@ -92,52 +91,100 @@ public class Node {
 
     class Attributes {
         ByteBuffer rcvBuffer;
-        ByteBuffer sendBuffer;
-        SocketAddress socketAddress;
+        InetSocketAddress socketAddress;
 
         public Attributes() {
-            rcvBuffer = ByteBuffer.allocate(socketByteBufferSize);
+            rcvBuffer = ByteBuffer.allocate(mtuSaveSize);
         }
     }
 
     private void read(SelectionKey key) throws IOException {
         DatagramChannel curChannel = (DatagramChannel) key.channel();
         Attributes attributes = (Attributes) key.attachment();
-        attributes.socketAddress = curChannel.receive(attributes.rcvBuffer);
-        String string = new String(attributes.rcvBuffer.array());
-        System.out.println("From " + attributes.socketAddress + ", message: " + string.trim());
-        attributes.sendBuffer = StandardCharsets.UTF_8.encode(string);
+        attributes.socketAddress = (InetSocketAddress) curChannel.receive(attributes.rcvBuffer);
 
-        neighboursInfoUpdate(curChannel, (InetSocketAddress) attributes.socketAddress);
+        neighboursInfoUpdate(attributes.socketAddress);
         printMap();
-
-        attributes.rcvBuffer.clear();
-        attributes.rcvBuffer.put(new byte[socketByteBufferSize]);
-        attributes.rcvBuffer.clear();
     }
 
-    private void checkMessage(String string) {
+    private void processMessage(SelectionKey key) throws IOException {
+        Attributes attributes = (Attributes) key.attachment();
+        byte[] message = attributes.rcvBuffer.array();
 
-    }
+        byte[] data = Arrays.copyOfRange(message, 16, message.length);
+        byte[] uuid = Arrays.copyOfRange(message, 0, 16);
 
-    private void neighboursInfoUpdate(DatagramChannel channel, InetSocketAddress address) {
-        synchronized (neighbours) {
-            for (Pair<InetSocketAddress, DatagramChannel> info : neighbours.keySet()) {
-                if (address.equals(info.getFirst())) {
-                    neighbours.put(info, System.currentTimeMillis());
-                    return;
+        //System.out.println("From: " + attributes.socketAddress + ", message: " + new String(data)
+        //        + ", uuid: " + new String(uuid));
+
+        if (!isEmpty(uuid)) {
+            if (!isEmpty(data)) { //MESSAGE
+                synchronized (controlMap) {
+                    if (!controlMap.containsKey(attributes.rcvBuffer)) { //first time message received
+                        controlMap.put(attributes.rcvBuffer, copyNeighboursWithout(attributes.socketAddress));
+                        distribute(key);
+                    }
+                    synchronized (neighbours) {
+                        inetChannel.send(ByteBuffer.wrap(uuid), attributes.socketAddress); //sending ACK anyway
+                    }
                 }
             }
+            else { //ACK
+                synchronized (controlMap) {
+                    LinkedList<InetSocketAddress> list = controlMap.get(findMessage(uuid));
+                    list.remove(attributes.socketAddress);
+                }
+            }
+        }
+        else { //INFO
 
-            neighbours.put(new Pair<>(address, channel), System.currentTimeMillis());
         }
     }
-    //if (address.getPort() == info.getFirst().getPort() && address.getAddress().equals(info.getFirst().getAddress())) {
+
+    ByteBuffer findMessage(byte[] uuid) {
+        ByteBuffer bytesUUID = ByteBuffer.wrap(uuid);
+        for (ByteBuffer key : controlMap.keySet()) {
+            key.rewind().limit(16);
+            if (bytesUUID.equals(key)) {
+                return key.clear();
+            }
+        }
+        return null;
+    }
+
+    LinkedList<InetSocketAddress> copyNeighboursWithout(InetSocketAddress inetSocketAddress) {
+        LinkedList<InetSocketAddress> result = new LinkedList<>();
+        synchronized (neighbours) {
+            for (InetSocketAddress address : neighbours) {
+                if (!address.equals(inetSocketAddress)) {
+                    result.add(address);
+                }
+            }
+        }
+        return result;
+    }
+
+    boolean isEmpty(byte[] uuid) {
+        for (byte b : uuid) {
+            if (b != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void neighboursInfoUpdate(InetSocketAddress address) {
+        synchronized (neighbours) {
+            if (!neighbours.contains(address)) {
+                neighbours.add(address);
+            }
+        }
+    }
 
     private void printMap() {
         synchronized (neighbours) {
-            for (Map.Entry<Pair<InetSocketAddress, DatagramChannel>, Long> entry : neighbours.entrySet()) {
-                System.out.println(entry);
+            for (InetSocketAddress addr : neighbours) {
+                System.out.println(addr);
             }
         }
     }
@@ -145,12 +192,19 @@ public class Node {
     private void distribute(SelectionKey key) throws IOException {
         Attributes attributes = (Attributes) key.attachment();
         synchronized (neighbours) {
-            for (Pair<InetSocketAddress, DatagramChannel> info : neighbours.keySet()) {
-                if (!attributes.socketAddress.equals(info.getFirst())) {
-                    info.getSecond().send(attributes.sendBuffer, info.getFirst());
-                    attributes.sendBuffer.rewind();
+            for (InetSocketAddress tempAddr : neighbours) {
+                if (!attributes.socketAddress.equals(tempAddr)) {
+                    inetChannel.send(attributes.rcvBuffer, tempAddr);
+                    attributes.rcvBuffer.rewind();
                 }
             }
         }
+    }
+
+    private void clearRcvBuffer(SelectionKey key) {
+        Attributes attributes = (Attributes) key.attachment();
+        attributes.rcvBuffer.clear();
+        attributes.rcvBuffer.put(new byte[mtuSaveSize]);
+        attributes.rcvBuffer.clear();
     }
 }

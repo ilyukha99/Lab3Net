@@ -6,21 +6,28 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.UUID;
 
 public class TerminalThread extends Thread {
-    private final int mtuSaveSize = 1400;
+    private final Node node;
+    private final byte[] name = Parser.name.concat(":").getBytes(StandardCharsets.UTF_8);
+
+    public TerminalThread(Node node) {
+        this.node = node;
+    }
 
     @Override
     public void run() {
+        final int mtuSaveSize = 1400;
         byte[] inputTerminalBuffer = new byte[mtuSaveSize];
         int result;
 
         try {
             while (true) {
                 Arrays.fill(inputTerminalBuffer, (byte)0);
-                result = System.in.read(inputTerminalBuffer, 16, mtuSaveSize - 16);
+                System.arraycopy(name, 0, inputTerminalBuffer, 16, name.length);
+                result = System.in.read(inputTerminalBuffer, name.length + 16, mtuSaveSize - 16 - name.length);
                 if (result <= 0) {
                     continue;
                 }
@@ -29,7 +36,7 @@ public class TerminalThread extends Thread {
                 fillByteArray(inputTerminalBuffer, generateUUIDArray());
 
                 broadcast(ByteBuffer.wrap(inputTerminalBuffer));
-                Node.controlMap.put(new Bytes(inputTerminalBuffer), new LinkedList<>(Node.neighbours));
+                node.controlMap.put(new Bytes(inputTerminalBuffer), new ArrayList<>(node.neighbours.keySet()));
             }
         } catch (IOException exc) {
             System.err.println(exc.getMessage());
@@ -37,9 +44,9 @@ public class TerminalThread extends Thread {
     }
 
     private void broadcast(ByteBuffer byteBuffer) throws IOException {
-        synchronized (Node.inetChannel) {
-            for (InetSocketAddress address : Node.neighbours) {
-                Node.inetChannel.send(byteBuffer, address);
+        synchronized (node.inetChannel) {
+            for (InetSocketAddress address : node.neighbours.keySet()) {
+                node.inetChannel.send(byteBuffer, address);
                 byteBuffer.rewind();
             }
         }

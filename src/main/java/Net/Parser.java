@@ -19,6 +19,11 @@ public class Parser {
         name = args[0];
         port = Integer.parseInt(args[1]);
         lossPercent = Integer.parseInt(args[2]);
+
+        if (name.length() > 50) {
+            throw new IllegalArgumentException("Node's name is too long.");
+        }
+
         if (port < 1 || port > 65535 || lossPercent < 0 || lossPercent > 100) {
             throw new IllegalArgumentException("Bad port or percent found.");
         }

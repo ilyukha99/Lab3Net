@@ -9,52 +9,66 @@ public class Manager extends Thread {
 
     private static final int sendingInterval = 1000; //1 sec
     private static final int deathFactor = 5;
+    private final Node node;
+
+    public Manager(Node node) {
+        this.node = node;
+    }
 
     @Override
     public void run() {
         long timeMark = System.currentTimeMillis(), deathTimeMark = timeMark;
-        int sizeMark = Node.controlMap.size();
+        Set<Bytes> keys = node.controlMap.keySet();
         try {
             while (true) {
                 if (System.currentTimeMillis() - timeMark > sendingInterval) {
-                    timeMark = System.currentTimeMillis();
                     sendNotifications();
+                    timeMark = System.currentTimeMillis();
                     if (System.currentTimeMillis() - deathTimeMark > deathFactor * sendingInterval) {
                         deathTimeMark = System.currentTimeMillis();
-                        clearNodes(sizeMark);
-                        sizeMark = Node.controlMap.size();
+                        clearNodes(keys);
+                        keys = node.controlMap.keySet();
                     }
                 }
             }
-        }
-        catch (IOException exc) {
+        } catch (IOException exc) {
             System.err.println(exc.getMessage());
         }
     }
 
     private void sendNotifications() throws IOException {
-        for (Map.Entry<Bytes, LinkedList<InetSocketAddress>> entry : Node.controlMap.entrySet()) {
+        for (Map.Entry<Bytes, ArrayList<InetSocketAddress>> entry : node.controlMap.entrySet()) {
             ByteBuffer byteBuffer = ByteBuffer.wrap(entry.getKey().byteArray);
-            LinkedList<InetSocketAddress> addresses = entry.getValue();
-            synchronized (Node.inetChannel) {
+            ArrayList<InetSocketAddress> addresses = entry.getValue();
+            synchronized (node.inetChannel) {
                 for (InetSocketAddress address : addresses) {
-                    Node.inetChannel.send(byteBuffer, address);
+                    node.inetChannel.send(byteBuffer, address);
                 }
             }
         }
     }
 
-    private void clearNodes(int sizeMark) {
-        List<Bytes> keys = new ArrayList<>(Node.controlMap.keySet());
-        for (int it = 0; it < sizeMark; ++it) {
-            Bytes key = keys.get(it);
-            LinkedList<InetSocketAddress> list = Node.controlMap.get(key);
-            for (InetSocketAddress address : list) {
-                if (Node.neighbours.remove(address)) {
-                    System.out.println("Removing: " + address);
+    private void clearNodes(Set<Bytes> previousSet) throws IOException {
+        for (Bytes bytes : previousSet) {
+            ArrayList<InetSocketAddress> addresses = node.controlMap.get(bytes);
+            if (addresses == null) {
+                continue;
+            }
+            for (InetSocketAddress socketAddress : addresses) {
+                InetSocketAddress newNeighbour = node.neighbours.get(socketAddress);
+                if (node.neighbours.remove(socketAddress) != null) {
+                    System.out.println("Removing: " + socketAddress);
+                    synchronized (node.localSocketAddress) {
+                        if (socketAddress.equals(node.assistant) && node.neighbours.size() != 0) {
+                            node.changeAssistant();
+                        }
+                    }
+                    if (!newNeighbour.equals(node.fakeAssistantAddress) && !newNeighbour.equals(node.localSocketAddress)) {
+                        node.processNewNeighbour(newNeighbour);
+                    }
                 }
             }
-            Node.controlMap.remove(key);
+            node.controlMap.entrySet().removeIf(entry -> previousSet.contains(entry.getKey()));
         }
     }
 }

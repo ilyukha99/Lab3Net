@@ -137,7 +137,7 @@ public class Node {
         if (isNotZero(uuid)) {
             if (isNotZero(data)) { //MESSAGE
                 controlMap.putIfAbsent(new Bytes(message), copyNeighboursWithout(attributes.socketAddress));
-                distribute(key);
+                distribute(attributes.rcvBuffer, attributes.socketAddress);
                 synchronized (inetChannel) {
                     inetChannel.send(ByteBuffer.wrap(uuid), attributes.socketAddress); //sending ACK in any case
                 }
@@ -181,13 +181,13 @@ public class Node {
         return false;
     }
 
-    private void distribute(SelectionKey key) throws IOException {
-        Attributes attributes = (Attributes) key.attachment();
+    private void distribute(ByteBuffer byteBuffer, InetSocketAddress socketAddress) throws IOException {
+        byteBuffer.rewind();
         synchronized (inetChannel) {
-            for (InetSocketAddress tempAddr : neighbours) {
-                if (!attributes.socketAddress.equals(tempAddr)) {
-                    inetChannel.send(attributes.rcvBuffer, tempAddr);
-                    attributes.rcvBuffer.rewind();
+            for (InetSocketAddress tempAddr : neighbours.keySet()) {
+                if (!socketAddress.equals(tempAddr)) {
+                    inetChannel.send(byteBuffer, tempAddr);
+                    byteBuffer.rewind();
                 }
             }
         }
